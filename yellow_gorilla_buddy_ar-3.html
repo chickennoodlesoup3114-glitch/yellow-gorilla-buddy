@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Yellow Gorilla Buddy AR</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#9bb6ca;color:#fff;font-family:system-ui,sans-serif}canvas{display:block;position:fixed;inset:0;z-index:0}
+#ui{position:fixed;z-index:3;left:0;right:0;top:0;padding:12px;text-align:center;pointer-events:none;background:linear-gradient(#10131bcc,transparent)}
+h1{margin:0;color:#ffdc16;font-size:clamp(20px,5.8vw,30px);text-shadow:0 2px 6px #000}#status{margin:5px auto 9px;max-width:500px;font-size:13px;text-shadow:0 2px 5px #000}
+.controls{display:flex;justify-content:center;gap:7px;flex-wrap:wrap;pointer-events:auto}button{border:0;border-radius:13px;padding:10px 13px;font-weight:800;background:#ffdc16;color:#161616;font-size:13px;box-shadow:0 3px 10px #0005}button.secondary{background:#fff;color:#161616}
+#bottom{position:fixed;z-index:3;bottom:12px;left:12px;right:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;pointer-events:none}#bottom button{pointer-events:auto}
+#hint{position:fixed;z-index:2;bottom:60px;left:12px;right:12px;text-align:center;font-size:12px;color:#fff;text-shadow:0 2px 5px #000;pointer-events:none}
+#bubble{position:fixed;z-index:4;top:150px;left:50%;transform:translateX(-50%);max-width:85%;background:#fff;color:#222;border-radius:18px;padding:10px 15px;font-weight:700;box-shadow:0 3px 12px #0004;display:none;text-align:center}
+</style></head><body>
+<div id="ui"><h1>💛 YELLOW GORILLA BUDDY</h1><div id="status">Tap the gorilla to say hi, or use the buttons to play!</div>
+<div class="controls"><button id="ar">START AR</button><button class="secondary" id="preview">3D PREVIEW</button><button class="secondary" id="voice">🎙 TALK</button><button class="secondary" id="follow">FOLLOW: OFF</button></div></div>
+<div id="bubble"></div>
+<div id="hint">Preview works here. Real-world AR requires a compatible Android browser and an HTTPS-hosted page.</div>
+<div id="bottom"><button id="wave">👋 WAVE</button><button id="pet">❤️ PET</button><button id="dance">🕺 DANCE</button><button id="tag">🏃 PLAY TAG</button><button id="stop" class="secondary">STOP</button></div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+let scene,camera,renderer,gorilla,reticle,hitSource,xrSession,mode='idle',follow=false,placed=false, lastTap=0;
+const clock=new THREE.Clock(), raycaster=new THREE.Raycaster(), pointer=new THREE.Vector2();
+const mat=(c,r=.8)=>new THREE.MeshStandardMaterial({color:c,roughness:r});
+const yellow=mat(0xffd21c),gold=mat(0xf4b900),dark=mat(0x191919),face=mat(0x77716a),white=mat(0xffffff),black=mat(0x080808);
+function ball(p,m,pos,sc,seg=20){let o=new THREE.Mesh(new THREE.SphereGeometry(1,seg,16),m);o.position.set(...pos);o.scale.set(...sc);p.add(o);return o}
+function bar(p,a,b,r1,r2,m){let va=new THREE.Vector3(...a),vb=new THREE.Vector3(...b),d=vb.clone().sub(va);let o=new THREE.Mesh(new THREE.CylinderGeometry(r2,r1,d.length(),14),m);o.position.copy(va).add(vb).multiplyScalar(.5);o.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.normalize());p.add(o);ball(p,m,a,[r1,r1,r1],12);ball(p,m,b,[r2,r2,r2],12);return o}
+function makeGorilla(){let g=new THREE.Group();g.userData.parts={arms:[],legs:[]};
+ball(g,yellow,[0,1.03,0],[.43,.52,.31]);ball(g,face,[0,1.03,.29],[.29,.34,.07]);
+ball(g,yellow,[0,1.63,0],[.43,.45,.36]);ball(g,face,[0,1.59,.33],[.31,.27,.09]);
+for(let s of [-1,1]){ball(g,black,[s*.135,1.7,.414],[.105,.12,.03]);ball(g,white,[s*.135,1.71,.442],[.07,.078,.02]);ball(g,black,[s*.135,1.71,.46],[.03,.04,.012]);}
+ball(g,face,[0,1.47,.42],[.15,.13,.06]);ball(g,dark,[0,1.445,.47],[.09,.04,.02]);
+for(let s of [-1,1]){let sh=[s*.34,1.3,0],el=[s*.62,.9,.05],wr=[s*.76,.43,.15];ball(g,yellow,sh,[.22,.23,.22]);let u=bar(g,sh,el,.17,.14,yellow),l=bar(g,el,wr,.14,.11,gold),hand=ball(g,dark,[s*.78,.3,.21],[.18,.1,.14]);for(let i=0;i<3;i++)ball(g,dark,[s*(.7+i*.07),.25,.31],[.04,.07,.055],12);g.userData.parts.arms.push({u,l,hand,s,sh,el,wr});
+let hip=[s*.19,.68,0],kn=[s*.23,.38,.02],ft=[s*.25,.12,.15];ball(g,yellow,hip,[.18,.21,.19]);bar(g,hip,kn,.14,.115,yellow);bar(g,kn,ft,.115,.095,gold);ball(g,dark,[s*.25,.08,.21],[.15,.07,.21]);}
+return g}
+function say(t){if('speechSynthesis'in window){speechSynthesis.cancel();let u=new SpeechSynthesisUtterance(t);u.rate=1.04;u.pitch=1.25;speechSynthesis.speak(u)}}
+function bubble(t){let b=document.querySelector('#bubble');b.textContent=t;b.style.display='block';clearTimeout(bubble.timer);bubble.timer=setTimeout(()=>b.style.display='none',2300);document.querySelector('#status').textContent=t}
+function act(m,t,s){mode=m;bubble(t);if(s)say(s)}
+function init(){scene=new THREE.Scene();scene.background=new THREE.Color(0x9bb6ca);camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.01,100);camera.position.set(0,1.6,4.5);camera.lookAt(0,1,0);
+renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.xr.enabled=true;renderer.outputColorSpace=THREE.SRGBColorSpace;document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x566070,2));let l=new THREE.DirectionalLight(0xffffff,2.5);l.position.set(2,5,3);scene.add(l);gorilla=makeGorilla();scene.add(gorilla);
+let floor=new THREE.Mesh(new THREE.CircleGeometry(2.8,48),mat(0x71806e));floor.rotation.x=-Math.PI/2;floor.position.y=-.03;scene.add(floor);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});renderer.setAnimationLoop(tick);
+renderer.domElement.addEventListener('pointerdown',e=>{if(xrSession){if(reticle?.visible&&!placed){gorilla.position.setFromMatrixPosition(reticle.matrix);placed=true;reticle.visible=false;bubble('Nice spot! Tap me to play.');}return;}pointer.x=e.clientX/innerWidth*2-1;pointer.y=-(e.clientY/innerHeight)*2+1;raycaster.setFromCamera(pointer,camera);if(raycaster.intersectObject(gorilla,true).length){act('wave','Hi, friend! 👋','Hey friend! Want to play?');}});
+}
+function tick(t,frame){let time=t*.001;if(mode==='walk'||mode==='tag'){gorilla.position.x=Math.sin(time*(mode==='tag'?2.2:1.1))*(mode==='tag'?1.2:.65);gorilla.rotation.y=Math.sin(time)*.3;gorilla.position.y=Math.abs(Math.sin(time*5))*.04;}
+else if(mode==='jump'){gorilla.position.y=Math.abs(Math.sin(time*3))*.55;}
+else if(mode==='dance'){gorilla.rotation.y=Math.sin(time*7)*.65;gorilla.position.y=Math.abs(Math.sin(time*7))*.12;}
+else{gorilla.position.y=Math.sin(time*2)*.018;if(mode==='wave'){let a=gorilla.userData.parts.arms[1];a.u.rotation.z=Math.sin(time*6)*.22;a.l.rotation.z=Math.sin(time*6)*.25;}}
+if(follow&&!xrSession){gorilla.position.x+=(Math.sin(time*.45)*.5-gorilla.position.x)*.012;}
+if(frame&&hitSource&&reticle){let hits=frame.getHitTestResults(hitSource);if(hits.length){reticle.visible=!placed;reticle.matrix.fromArray(hits[0].getPose(renderer.xr.getReferenceSpace()).transform.matrix)}else reticle.visible=false;}
+renderer.render(scene,camera)}
+async function startAR(){if(!navigator.xr){bubble('AR unavailable here. Use 3D Preview or host this file on HTTPS in compatible Chrome.');return}try{if(!await navigator.xr.isSessionSupported('immersive-ar')){bubble('This phone/browser does not support WebXR AR. 3D Preview still works.');return}xrSession=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['hit-test'],optionalFeatures:['dom-overlay'],domOverlay:{root:document.body}});renderer.xr.setReferenceSpaceType('local');await renderer.xr.setSession(xrSession);scene.background=null;let floor=scene.children.find(o=>o.geometry?.type==='CircleGeometry');if(floor)floor.visible=false;reticle=new THREE.Mesh(new THREE.RingGeometry(.12,.16,32),new THREE.MeshBasicMaterial({color:0xffffff}));reticle.rotation.x=-Math.PI/2;reticle.matrixAutoUpdate=false;scene.add(reticle);let v=await xrSession.requestReferenceSpace('viewer');hitSource=await xrSession.requestHitTestSource({space:v});placed=false;xrSession.addEventListener('end',()=>{hitSource=null;scene.background=new THREE.Color(0x9bb6ca)});bubble('Point at the floor and tap to place your gorilla.');}catch(e){bubble('AR could not start: '+e.message)}}
+function listen(){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){bubble('Voice recognition is not available in this browser. Try Chrome and allow microphone access.');return}let r=new SR();r.lang='en-US';r.interimResults=false;r.maxAlternatives=1;r.onresult=e=>{let s=e.results[0][0].transcript.toLowerCase();bubble('I heard: “'+s+'”');if(/wave|hello|hi/.test(s))act('wave','Hey, friend! 👋','Hey friend!');else if(/jump/.test(s))act('jump','Boing!','Boing!');else if(/dance/.test(s))act('dance','Dance party!','Let’s dance!');else if(/follow|come here/.test(s)){follow=true;document.querySelector('#follow').textContent='FOLLOW: ON';act('idle','Okay, I’ll follow along!','I’ll follow you!');}else if(/stop|stay/.test(s)){follow=false;mode='idle';act('idle','Okay, I’ll stay here.','Okay, I’ll stay here.')}else if(/play|tag|chase/.test(s))act('tag','Tag! You’re it!','Tag! You’re it!');else if(/pet|good gorilla/.test(s))act('wave','Aww, thanks! ❤️','That tickles!');else act('wave','Ooh! Tell me to wave, jump, dance, follow, stop, or play tag.','Try saying wave, jump, dance, follow me, stop, or play tag.');};r.onerror=e=>bubble('Voice error: '+e.error+'. Check microphone permission.');r.start()}
+document.querySelector('#ar').onclick=startAR;document.querySelector('#preview').onclick=()=>{if(xrSession)xrSession.end();scene.background=new THREE.Color(0x9bb6ca);camera.position.set(0,1.6,4.5);camera.lookAt(0,1,0);gorilla.position.set(0,0,0);placed=false;bubble('3D preview mode. Tap the gorilla to say hi!')};
+document.querySelector('#voice').onclick=listen;document.querySelector('#follow').onclick=()=>{follow=!follow;document.querySelector('#follow').textContent='FOLLOW: '+(follow?'ON':'OFF');bubble(follow?'I’ll follow along in preview mode!':'I’ll stay right here!')};
+document.querySelector('#wave').onclick=()=>act('wave','Hello, friend! 👋','Hey friend!');document.querySelector('#pet').onclick=()=>act('wave','That tickles! ❤️','That tickles!');document.querySelector('#dance').onclick=()=>act('dance','Dance party! 🕺','Let’s dance!');document.querySelector('#tag').onclick=()=>act('tag','Tag! You’re it! 🏃','Tag! You’re it!');document.querySelector('#stop').onclick=()=>{mode='idle';follow=false;document.querySelector('#follow').textContent='FOLLOW: OFF';bubble('Okay, taking a break!');say('Okay, taking a break!')};init();
+</script></body></html>
